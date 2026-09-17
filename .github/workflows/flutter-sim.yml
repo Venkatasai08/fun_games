@@ -1,58 +1,58 @@
-# flutter-sim-template-version: 1
+# flutter-sim-template-version: 2
 name: flutter-sim
-run-name: flutter-sim ${{ inputs.session }} · ${{ inputs.mode }} · ${{ inputs.minutes }}m
+run-name: "flutter-sim ${{ inputs.session }} (${{ inputs.mode }})"
 
 on:
   workflow_dispatch:
     inputs:
       session:
-        description: Session ID (used to correlate the run with the local CLI)
+        description: "Session ID"
         required: true
       gate_token:
-        description: Shared secret required to view the simulator stream
+        description: "Gate access token"
         required: true
       minutes:
-        description: How long to hold the stream open (in minutes)
+        description: "Session duration (minutes)"
         default: "30"
       device:
-        description: iOS Simulator device name
-        default: iPhone 16 Pro
+        description: "iOS Simulator device name"
+        default: "iPhone 16 Pro"
       mode:
-        description: build (compile Flutter app from source) or app (install a prebuilt .app)
-        default: build
+        description: "build or app"
+        default: "build"
       app_url:
-        description: URL of a prebuilt simulator .app archive (mode:app)
+        description: "Prebuilt app URL"
         default: ""
       app_release_asset:
-        description: Asset name on this repo's `flutter-sim-build` release to install (mode:app)
+        description: "Prebuilt app release asset"
         default: ""
       flutter_version:
-        description: Flutter version (e.g. 3.24.0 or empty for channel latest)
+        description: "Flutter version (optional)"
         default: ""
       flutter_channel:
-        description: Flutter release channel (stable, beta, master)
-        default: stable
+        description: "Flutter channel"
+        default: "stable"
       transport:
-        description: http (default) or webrtc
-        default: http
+        description: "Transport (http or webrtc)"
+        default: "http"
       codec:
-        description: Stream codec (mjpeg recommended for cloud runners)
-        default: mjpeg
+        description: "Stream codec"
+        default: "mjpeg"
       max_dimension:
-        description: Cap captured width/height in pixels (900 default, 0 for native)
+        description: "Cap dimension (pixels)"
         default: "900"
       video_fps:
-        description: MJPEG frame rate (default 30)
+        description: "Framerate"
         default: "30"
       video_quality:
-        description: MJPEG quality (0.05 - 1.0, default 0.7)
+        description: "Quality"
         default: "0.7"
       export_app:
-        description: Upload the built .app as an artifact
+        description: "Export app artifact"
         default: "false"
       runner:
-        description: Runner label (must be arm64 macOS for serve-sim binaries)
-        default: macos-15
+        description: "Runner image"
+        default: "macos-15"
 
 permissions:
   contents: read
@@ -85,12 +85,10 @@ jobs:
         if: inputs.mode == 'build'
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: ${{ inputs.flutter_version }}
           channel: ${{ inputs.flutter_channel }}
           cache: true
-          cache-key: flutter-:os:-:channel:-:version:-:arch:-:hash:
 
-      - name: Cache CocoaPods & Pub
+      - name: Cache CocoaPods and Pub
         if: inputs.mode == 'build'
         uses: actions/cache@v4
         with:
@@ -115,7 +113,7 @@ jobs:
             | sed -E 's/.*\(([0-9A-Fa-f-]{36})\).*/\1/' || true)
 
           if [ -z "$UDID" ]; then
-            echo "::warning::'$DEVICE' not found directly; falling back to newest available iPhone"
+            echo "::warning::$DEVICE not found directly; falling back to newest iPhone"
             UDID=$(xcrun simctl list devices available \
               | grep -E '^\s+iPhone' \
               | tail -1 \
@@ -209,7 +207,7 @@ jobs:
 
           echo "::notice title=flutter-sim::$TUNNEL"
           {
-            echo "## 📱 flutter-sim"
+            echo "## flutter-sim"
             echo
             echo "Simulator stream live at \`$TUNNEL\` for ${{ inputs.minutes }} minutes."
             echo "Use the access key provided by your local CLI to open it."
@@ -308,7 +306,7 @@ jobs:
           [ -n "$APP" ] || { echo "::error::no .app found in the archive"; exit 1; }
 
           if [ ! -f "$APP/Info.plist" ]; then
-            echo "::error::$APP has no Info.plist — is this a simulator build?"; exit 1
+            echo "::error::$APP has no Info.plist - is this a simulator build?"; exit 1
           fi
 
           BUNDLE_ID=$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$APP/Info.plist")
