@@ -1,0 +1,334 @@
+# flutter-sim-template-version: 1
+name: flutter-sim
+run-name: flutter-sim ${{ inputs.session }} · ${{ inputs.mode }} · ${{ inputs.minutes }}m
+
+on:
+  workflow_dispatch:
+    inputs:
+      session:
+        description: Session ID (used to correlate the run with the local CLI)
+        required: true
+      gate_token:
+        description: Shared secret required to view the simulator stream
+        required: true
+      minutes:
+        description: How long to hold the stream open (in minutes)
+        default: "30"
+      device:
+        description: iOS Simulator device name
+        default: iPhone 16 Pro
+      mode:
+        description: build (compile Flutter app from source) or app (install a prebuilt .app)
+        default: build
+      app_url:
+        description: URL of a prebuilt simulator .app archive (mode:app)
+        default: ""
+      app_release_asset:
+        description: Asset name on this repo's `flutter-sim-build` release to install (mode:app)
+        default: ""
+      flutter_version:
+        description: Flutter version (e.g. 3.24.0 or empty for channel latest)
+        default: ""
+      flutter_channel:
+        description: Flutter release channel (stable, beta, master)
+        default: stable
+      transport:
+        description: http (default) or webrtc
+        default: http
+      codec:
+        description: Stream codec (mjpeg recommended for cloud runners)
+        default: mjpeg
+      max_dimension:
+        description: Cap captured width/height in pixels (900 default, 0 for native)
+        default: "900"
+      video_fps:
+        description: MJPEG frame rate (default 30)
+        default: "30"
+      video_quality:
+        description: MJPEG quality (0.05 - 1.0, default 0.7)
+        default: "0.7"
+      export_app:
+        description: Upload the built .app as an artifact
+        default: "false"
+      runner:
+        description: Runner label (must be arm64 macOS for serve-sim binaries)
+        default: macos-15
+
+permissions:
+  contents: read
+  statuses: write
+
+concurrency:
+  group: flutter-sim-${{ inputs.session }}
+  cancel-in-progress: true
+
+jobs:
+  stream:
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 360
+    env:
+      GH_TOKEN: ${{ github.token }}
+      STATUS_CONTEXT: flutter-sim/${{ inputs.session }}
+      GATE_PORT: "3199"
+      PREVIEW_PORT: "3200"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup Flutter SDK
+        if: inputs.mode == 'build'
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ inputs.flutter_version }}
+          channel: ${{ inputs.flutter_channel }}
+          cache: true
+          cache-key: flutter-:os:-:channel:-:version:-:arch:-:hash:
+
+      - name: Cache CocoaPods & Pub
+        if: inputs.mode == 'build'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.pub-cache
+            ~/Library/Caches/CocoaPods
+            ios/Pods
+          key: flutter-sim-${{ runner.os }}-${{ hashFiles('pubspec.lock', 'ios/Podfile.lock') }}
+          restore-keys: |
+            flutter-sim-${{ runner.os }}-
+
+      - name: Boot iOS Simulator
+        timeout-minutes: 10
+        id: sim
+        run: |
+          set -euo pipefail
+          DEVICE='${{ inputs.device }}'
+
+          UDID=$(xcrun simctl list devices available \
+            | grep -F "$DEVICE (" \
+            | head -1 \
+            | sed -E 's/.*\(([0-9A-Fa-f-]{36})\).*/\1/' || true)
+
+          if [ -z "$UDID" ]; then
+            echo "::warning::'$DEVICE' not found directly; falling back to newest available iPhone"
+            UDID=$(xcrun simctl list devices available \
+              | grep -E '^\s+iPhone' \
+              | tail -1 \
+              | sed -E 's/.*\(([0-9A-Fa-f-]{36})\).*/\1/')
+          fi
+
+          [ -n "$UDID" ] || { echo "No iOS simulator available on runner"; exit 1; }
+
+          echo "Booting simulator: $UDID ($DEVICE)"
+          xcrun simctl boot "$UDID" || true
+          xcrun simctl bootstatus "$UDID" -b
+          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+
+      - name: Start serve-sim
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          ARGS=(
+            --detach --quiet
+            --port "$PREVIEW_PORT"
+            --max-dimension '${{ inputs.max_dimension }}'
+            --codec '${{ inputs.codec }}'
+            --mjpeg-fps '${{ inputs.video_fps }}'
+            --mjpeg-quality '${{ inputs.video_quality }}'
+          )
+
+          npx --yes @expo/serve-sim@latest "${ARGS[@]}"
+
+          for _ in $(seq 1 90); do
+            if curl -fsS "http://127.0.0.1:$PREVIEW_PORT/readyz" >/dev/null 2>&1; then
+              echo "serve-sim ready"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "serve-sim failed to become ready"
+          exit 1
+
+      - name: Start Auth Gate
+        timeout-minutes: 5
+        env:
+          FLUTTER_SIM_GATE_TOKEN: ${{ inputs.gate_token }}
+        run: |
+          set -euo pipefail
+          FLUTTER_SIM_TARGET_PORT="$PREVIEW_PORT" FLUTTER_SIM_GATE_PORT="$GATE_PORT" \
+            nohup node .github/flutter-sim/gate.cjs > gate.log 2>&1 &
+          disown
+
+          for _ in $(seq 1 30); do
+            if curl -fsS -o /dev/null "http://127.0.0.1:$GATE_PORT/__flutter-sim/healthz"; then
+              echo "Auth gate ready"
+              exit 0
+            fi
+            sleep 1
+          done
+          cat gate.log; exit 1
+
+      - name: Open Cloudflare Tunnel and publish URL
+        timeout-minutes: 10
+        id: tunnel
+        env:
+          GATE_TOKEN: ${{ inputs.gate_token }}
+        run: |
+          set -euo pipefail
+          curl -fsSL -o cloudflared.tgz \
+            https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-darwin-arm64.tgz
+          tar -xzf cloudflared.tgz
+          chmod +x cloudflared
+
+          nohup ./cloudflared tunnel --no-autoupdate --url "http://127.0.0.1:$GATE_PORT" \
+            --logfile cloudflared.log > /dev/null 2>&1 &
+          disown
+
+          TUNNEL=""
+          for _ in $(seq 1 60); do
+            TUNNEL=$(grep -Eo 'https://[a-z0-9-]+\.trycloudflare\.com' cloudflared.log 2>/dev/null | head -1 || true)
+            [ -n "$TUNNEL" ] && break
+            sleep 2
+          done
+          [ -n "$TUNNEL" ] || { echo "cloudflared never reported a URL"; tail -50 cloudflared.log; exit 1; }
+
+          URL="$TUNNEL/?k=$GATE_TOKEN"
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+
+          # Publish status on the commit
+          gh api "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
+            -f state=success \
+            -f "context=$STATUS_CONTEXT" \
+            -f "target_url=$TUNNEL" \
+            -f "description=Flutter simulator live; app starting"
+
+          echo "::notice title=flutter-sim::$TUNNEL"
+          {
+            echo "## 📱 flutter-sim"
+            echo
+            echo "Simulator stream live at \`$TUNNEL\` for ${{ inputs.minutes }} minutes."
+            echo "Use the access key provided by your local CLI to open it."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Build Flutter iOS App
+        timeout-minutes: 40
+        if: inputs.mode == 'build'
+        env:
+          UDID: ${{ steps.sim.outputs.udid }}
+        run: |
+          set -euo pipefail
+          flutter doctor -v
+          flutter pub get
+          echo "Building Flutter iOS Simulator App..."
+          flutter build ios --simulator --no-codesign --debug
+
+          APP=$(find build/ios/iphonesimulator -maxdepth 1 -name '*.app' | head -1)
+          [ -n "$APP" ] || { echo "No .app output found in build/ios/iphonesimulator"; exit 1; }
+          echo "Built $APP"
+
+      - name: Export App Archive
+        if: inputs.mode == 'build' && inputs.export_app == 'true'
+        run: |
+          set -euo pipefail
+          APP=$(find build/ios/iphonesimulator -maxdepth 1 -name '*.app' | head -1)
+          [ -n "$APP" ] || { echo "::error::nothing to export"; exit 1; }
+          mkdir -p build/export
+          tar -C "$(dirname "$APP")" -czf "build/export/$(basename "$APP").tar.gz" "$(basename "$APP")"
+
+      - name: Upload App Artifact
+        if: inputs.mode == 'build' && inputs.export_app == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: flutter-sim-app-${{ inputs.session }}
+          path: build/export/*.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Install and Launch Flutter App
+        timeout-minutes: 15
+        if: inputs.mode == 'build'
+        env:
+          UDID: ${{ steps.sim.outputs.udid }}
+        run: |
+          set -euo pipefail
+          APP=$(find build/ios/iphonesimulator -maxdepth 1 -name '*.app' | head -1)
+          [ -n "$APP" ] || { echo "No .app to install"; exit 1; }
+
+          BUNDLE_ID=$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$APP/Info.plist" 2>/dev/null || true)
+          if [ -z "$BUNDLE_ID" ]; then
+            BUNDLE_ID=$(/usr/libexec/PlistBuddy -c 'Print PRODUCT_BUNDLE_IDENTIFIER' "$APP/Info.plist" 2>/dev/null || true)
+          fi
+
+          echo "Installing $APP onto simulator $UDID..."
+          xcrun simctl install "$UDID" "$APP"
+
+          echo "Launching app with bundle ID: $BUNDLE_ID"
+          xcrun simctl launch "$UDID" "$BUNDLE_ID"
+          echo "Flutter iOS app is running on the simulator!"
+
+      - name: Install Prebuilt App
+        timeout-minutes: 15
+        if: inputs.mode == 'app'
+        env:
+          UDID: ${{ steps.sim.outputs.udid }}
+          APP_URL: ${{ inputs.app_url }}
+          APP_RELEASE_ASSET: ${{ inputs.app_release_asset }}
+          APP_RELEASE_TAG: flutter-sim-build
+        run: |
+          set -euo pipefail
+          [ -n "$APP_URL" ] || [ -n "$APP_RELEASE_ASSET" ] \
+            || { echo "::error::mode 'app' requires app_url or app_release_asset"; exit 1; }
+
+          mkdir -p build/prebuilt && cd build/prebuilt
+
+          if [ -n "$APP_RELEASE_ASSET" ]; then
+            echo "Downloading $APP_RELEASE_ASSET from release $APP_RELEASE_TAG"
+            gh release download "$APP_RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --pattern "$APP_RELEASE_ASSET" \
+              --output download.bin \
+              --clobber
+          else
+            echo "Downloading prebuilt app from URL"
+            curl -fsSL --retry 3 -o download.bin "$APP_URL"
+          fi
+
+          case "$(file -b --mime-type download.bin)" in
+            application/gzip|application/x-gzip) tar -xzf download.bin ;;
+            application/zip)                     unzip -q download.bin ;;
+            *) echo "::error::unrecognised archive; expected .tar.gz or .zip of a simulator .app"; exit 1 ;;
+          esac
+
+          APP=$(find . -maxdepth 3 -type d -name '*.app' | head -1)
+          [ -n "$APP" ] || { echo "::error::no .app found in the archive"; exit 1; }
+
+          if [ ! -f "$APP/Info.plist" ]; then
+            echo "::error::$APP has no Info.plist — is this a simulator build?"; exit 1
+          fi
+
+          BUNDLE_ID=$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$APP/Info.plist")
+          xcrun simctl install "$UDID" "$APP"
+          xcrun simctl launch "$UDID" "$BUNDLE_ID"
+          echo "Launched $BUNDLE_ID from prebuilt archive"
+
+      - name: Hold session open
+        timeout-minutes: 360
+        run: |
+          set -euo pipefail
+          MINUTES=${{ inputs.minutes }}
+          END=$(( $(date +%s) + MINUTES * 60 ))
+          echo "Holding stream open until $(date -r "$END" '+%Y-%m-%d %H:%M:%S')..."
+
+          while [ "$(date +%s)" -lt "$END" ]; do
+            curl -fsS -o /dev/null "http://127.0.0.1:$PREVIEW_PORT/healthz" || {
+              echo "serve-sim exited; closing session"
+              exit 1
+            }
+            sleep 15
+          done
+          echo "Session duration elapsed."

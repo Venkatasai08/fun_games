@@ -53,3 +53,5 @@ functions/.secret.local
 
 # VS Code launch config contains API keys — do not commit
 .vscode/launch.json
+.flutter-sim
+.packages
