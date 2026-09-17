@@ -1,4 +1,4 @@
-# flutter-sim-template-version: 2
+# flutter-sim-template-version: 3
 name: flutter-sim
 run-name: "flutter-sim ${{ inputs.session }} (${{ inputs.mode }})"
 
@@ -203,7 +203,7 @@ jobs:
             -f state=success \
             -f "context=$STATUS_CONTEXT" \
             -f "target_url=$TUNNEL" \
-            -f "description=Flutter simulator live; app starting"
+            -f "description=Flutter simulator live; compiling app"
 
           echo "::notice title=flutter-sim::$TUNNEL"
           {
@@ -222,6 +222,12 @@ jobs:
           set -euo pipefail
           flutter doctor -v
           flutter pub get
+
+          if [ ! -d "ios/Runner.xcodeproj" ]; then
+            echo "iOS platform folder missing; generating iOS scaffold..."
+            flutter create --platforms=ios .
+          fi
+
           echo "Building Flutter iOS Simulator App..."
           flutter build ios --simulator --no-codesign --debug
 
