@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "750341393850",
+    "project_id": "mychat-bc5a1",
+    "storage_bucket": "mychat-bc5a1.appspot.com"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:750341393850:android:51f8a053d5d42e72682183",
+        "android_client_info": {
+          "package_name": "com.example.mychat"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBvG2H13kjkV3Pmh_DV7dsXzYgTFcYP8Kw"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:750341393850:android:472744b3dc7833e1682183",
+        "android_client_info": {
+          "package_name": "com.example.tambola"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBvG2H13kjkV3Pmh_DV7dsXzYgTFcYP8Kw"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

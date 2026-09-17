@@ -1,0 +1,3 @@
+// Replace _SmallBtn in lobby_mode_screen.dart — use GestureDetector with behavior
+// This is the corrected standalone widget. The file already contains this; just
+// the onTap signature needs to be a plain VoidCallback (no event parameter).

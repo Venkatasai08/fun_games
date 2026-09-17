@@ -1,0 +1,103 @@
+<!doctype html>
+<html>
+  <head>
+    <base href="$FLUTTER_BASE_HREF" />
+    <meta
+      http-equiv="Cross-Origin-Opener-Policy"
+      content="same-origin-allow-popups"
+    />
+    <meta http-equiv="Cross-Origin-Embedder-Policy" content="unsafe-none" />
+    <meta charset="UTF-8" />
+    <meta content="IE=Edge" http-equiv="X-UA-Compatible" />
+    <meta name="description" content="Tambola - Real-time multiplayer game" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black" />
+    <meta name="apple-mobile-web-app-title" content="Tambola" />
+    <meta name="theme-color" content="#6C63FF" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="manifest" href="manifest.json" />
+    <title>Tambola</title>
+    <style>
+      body {
+        background-color: #0f0e1a;
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+      }
+      #loading-screen {
+        position: fixed;
+        inset: 0;
+        background: #0f0e1a;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        z-index: 9999;
+        transition: opacity 0.5s ease;
+      }
+      #loading-screen.hidden {
+        opacity: 0;
+        pointer-events: none;
+      }
+      .logo-icon {
+        width: 72px;
+        height: 72px;
+        background: linear-gradient(135deg, #6c63ff, #9c94ff);
+        border-radius: 20px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-bottom: 20px;
+        font-size: 36px;
+        box-shadow: 0 8px 32px rgba(108, 99, 255, 0.4);
+      }
+      .app-title {
+        color: white;
+        font-family: -apple-system, system-ui, sans-serif;
+        font-size: 28px;
+        font-weight: 900;
+        letter-spacing: 6px;
+        margin-bottom: 8px;
+      }
+      .app-subtitle {
+        color: #b0aecf;
+        font-family: -apple-system, system-ui, sans-serif;
+        font-size: 14px;
+        margin-bottom: 40px;
+      }
+      .spinner {
+        width: 36px;
+        height: 36px;
+        border: 3px solid rgba(108, 99, 255, 0.2);
+        border-top-color: #6c63ff;
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+      }
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="loading-screen">
+      <div class="logo-icon">🎮</div>
+      <div class="app-title">TAMBOLA</div>
+      <div class="app-subtitle">Play together, win together</div>
+      <div class="spinner"></div>
+    </div>
+
+    <script>
+      window.addEventListener("flutter-first-frame", function () {
+        const loader = document.getElementById("loading-screen");
+        if (loader) {
+          loader.classList.add("hidden");
+          setTimeout(() => loader.remove(), 600);
+        }
+      });
+    </script>
+
+    <script src="flutter_bootstrap.js" async></script>
+  </body>
+</html>
